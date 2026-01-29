@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"boxy/internal/config"
@@ -375,6 +376,11 @@ func (m *Model) buildItemList(bookmarked, installed []manager.PackageInfo) {
 			})
 		}
 	}
+
+	// Sort all items alphabetically by name
+	sort.Slice(m.items, func(i, j int) bool {
+		return m.items[i].info.Name < m.items[j].info.Name
+	})
 }
 
 func (m *Model) updateInstallStatus(pkg string, installed bool) {
@@ -475,47 +481,14 @@ func (m Model) View() string {
 
 	if m.filtered != nil {
 		b.WriteString(headerStyle.Render("SEARCH RESULTS"))
-		if len(items) > maxVisible {
-			b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
-		}
-		b.WriteString("\n")
-		m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 	} else {
-		// Bookmarked section
-		var bookmarked []packageItem
-		var installed []packageItem
-		for _, item := range items {
-			if item.bookmarked {
-				bookmarked = append(bookmarked, item)
-			} else {
-				installed = append(installed, item)
-			}
-		}
-
-		// Calculate what's visible in the viewport
-		totalItems := len(bookmarked) + len(installed)
-		if totalItems > maxVisible {
-			b.WriteString(dimStyle.Render(fmt.Sprintf("Showing %d-%d of %d", m.scroll+1, min(m.scroll+maxVisible, totalItems), totalItems)))
-			b.WriteString("\n")
-		}
-
-		// Render items with viewport scrolling
-		rendered := 0
-		currentIdx := 0
-
-		if len(bookmarked) > 0 && currentIdx+len(bookmarked) > m.scroll {
-			b.WriteString(headerStyle.Render("BOOKMARKED"))
-			b.WriteString("\n")
-			rendered += m.renderItemsViewport(&b, bookmarked, currentIdx, m.scroll, maxVisible-rendered)
-		}
-		currentIdx += len(bookmarked)
-
-		if len(installed) > 0 && rendered < maxVisible && currentIdx+len(installed) > m.scroll {
-			b.WriteString(headerStyle.Render("INSTALLED"))
-			b.WriteString("\n")
-			m.renderItemsViewport(&b, installed, currentIdx, m.scroll, maxVisible-rendered)
-		}
+		b.WriteString(headerStyle.Render("PACKAGES"))
 	}
+	if len(items) > maxVisible {
+		b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
+	}
+	b.WriteString("\n")
+	m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 
 	// Status message
 	if m.statusMsg != "" {
