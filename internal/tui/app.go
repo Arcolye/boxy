@@ -41,6 +41,7 @@ type Model struct {
 	width      int
 	height     int
 	cursor     int
+	scroll     int // scroll offset for viewport
 	viewMode   viewMode
 	searchInput textinput.Model
 	items      []packageItem
@@ -101,6 +102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.ensureCursorVisible()
 		return m, nil
 
 	case packagesLoadedMsg:
@@ -127,6 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		m.cursor = 0
+		m.scroll = 0
 		return m, nil
 
 	case packageInfoMsg:
@@ -199,12 +202,14 @@ func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case msg.String() == "up" || msg.String() == "k":
 		if m.cursor > 0 {
 			m.cursor--
+			m.ensureCursorVisible()
 		}
 
 	case msg.String() == "down" || msg.String() == "j":
 		items := m.visibleItems()
 		if m.cursor < len(items)-1 {
 			m.cursor++
+			m.ensureCursorVisible()
 		}
 
 	case msg.String() == "/":
@@ -265,6 +270,7 @@ func (m *Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 		m.filtered = nil
 		m.cursor = 0
+		m.scroll = 0
 		return m, nil
 
 	case "enter":
@@ -408,6 +414,33 @@ func (m Model) visibleItems() []packageItem {
 	return m.items
 }
 
+// maxVisibleItems returns how many package items can fit on screen
+// accounting for header, search bar, status, and help lines
+func (m Model) maxVisibleItems() int {
+	// Header (2 lines) + search bar (2 lines) + status (2 lines) + help (2 lines) + section headers (2 lines)
+	overhead := 10
+	available := m.height - overhead
+	if available < 1 {
+		return 1
+	}
+	return available
+}
+
+// ensureCursorVisible adjusts scroll to keep cursor in view
+func (m *Model) ensureCursorVisible() {
+	maxVisible := m.maxVisibleItems()
+
+	// Cursor above viewport - scroll up
+	if m.cursor < m.scroll {
+		m.scroll = m.cursor
+	}
+
+	// Cursor below viewport - scroll down
+	if m.cursor >= m.scroll+maxVisible {
+		m.scroll = m.cursor - maxVisible + 1
+	}
+}
+
 func (m Model) View() string {
 	if m.loading {
 		return "Loading..."
@@ -438,10 +471,15 @@ func (m Model) View() string {
 
 	// Package list
 	items := m.visibleItems()
+	maxVisible := m.maxVisibleItems()
+
 	if m.filtered != nil {
 		b.WriteString(headerStyle.Render("SEARCH RESULTS"))
+		if len(items) > maxVisible {
+			b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
+		}
 		b.WriteString("\n")
-		m.renderItems(&b, items, 0)
+		m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 	} else {
 		// Bookmarked section
 		var bookmarked []packageItem
@@ -454,16 +492,28 @@ func (m Model) View() string {
 			}
 		}
 
-		if len(bookmarked) > 0 {
-			b.WriteString(headerStyle.Render("BOOKMARKED"))
+		// Calculate what's visible in the viewport
+		totalItems := len(bookmarked) + len(installed)
+		if totalItems > maxVisible {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("Showing %d-%d of %d", m.scroll+1, min(m.scroll+maxVisible, totalItems), totalItems)))
 			b.WriteString("\n")
-			m.renderItems(&b, bookmarked, 0)
 		}
 
-		if len(installed) > 0 {
+		// Render items with viewport scrolling
+		rendered := 0
+		currentIdx := 0
+
+		if len(bookmarked) > 0 && currentIdx+len(bookmarked) > m.scroll {
+			b.WriteString(headerStyle.Render("BOOKMARKED"))
+			b.WriteString("\n")
+			rendered += m.renderItemsViewport(&b, bookmarked, currentIdx, m.scroll, maxVisible-rendered)
+		}
+		currentIdx += len(bookmarked)
+
+		if len(installed) > 0 && rendered < maxVisible && currentIdx+len(installed) > m.scroll {
 			b.WriteString(headerStyle.Render("INSTALLED"))
 			b.WriteString("\n")
-			m.renderItems(&b, installed, len(bookmarked))
+			m.renderItemsViewport(&b, installed, currentIdx, m.scroll, maxVisible-rendered)
 		}
 	}
 
@@ -499,11 +549,28 @@ func (m Model) View() string {
 	return b.String()
 }
 
-func (m Model) renderItems(b *strings.Builder, items []packageItem, offset int) {
+// renderItemsViewport renders items within the viewport
+// offset: the global index of the first item in this slice
+// scroll: the current scroll position
+// maxItems: maximum items to render
+// returns: number of items rendered
+func (m Model) renderItemsViewport(b *strings.Builder, items []packageItem, offset, scroll, maxItems int) int {
+	rendered := 0
 	for i, item := range items {
-		idx := offset + i
+		globalIdx := offset + i
+
+		// Skip items before the scroll position
+		if globalIdx < scroll {
+			continue
+		}
+
+		// Stop if we've rendered enough items
+		if rendered >= maxItems {
+			break
+		}
+
 		prefix := "  "
-		if idx == m.cursor {
+		if globalIdx == m.cursor {
 			prefix = "> "
 		}
 
@@ -513,7 +580,7 @@ func (m Model) renderItems(b *strings.Builder, items []packageItem, offset int) 
 		}
 
 		name := item.info.Name
-		if idx == m.cursor {
+		if globalIdx == m.cursor {
 			name = selectedStyle.Render(name)
 		} else {
 			name = normalStyle.Render(name)
@@ -536,7 +603,9 @@ func (m Model) renderItems(b *strings.Builder, items []packageItem, offset int) 
 		line := fmt.Sprintf("%s%s %s  %s  %s", prefix, bullet, name, desc, status)
 		b.WriteString(line)
 		b.WriteString("\n")
+		rendered++
 	}
+	return rendered
 }
 
 func (m Model) renderWithModal(bg, title, content string) string {
