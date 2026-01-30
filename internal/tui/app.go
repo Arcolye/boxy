@@ -78,20 +78,25 @@ func (m Model) loadPackages() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		var bookmarked []manager.PackageInfo
-		for _, pkg := range m.cfg.Packages {
-			info, err := m.mgr.GetInfo(ctx, pkg)
-			if err != nil {
-				info = manager.PackageInfo{Name: pkg}
-			}
-			installed, _ := m.mgr.IsInstalled(ctx, pkg)
-			info.Installed = installed
-			bookmarked = append(bookmarked, info)
-		}
-
+		// First, get all installed packages (single brew call)
 		installed, err := m.mgr.ListInstalled(ctx)
 		if err != nil {
-			return packagesLoadedMsg{bookmarked: bookmarked, err: err}
+			return packagesLoadedMsg{err: err}
+		}
+
+		// Build a set of installed package names for quick lookup
+		installedSet := make(map[string]bool)
+		for _, pkg := range installed {
+			installedSet[pkg.Name] = true
+		}
+
+		// For bookmarked packages, just create basic info and check against installed set
+		var bookmarked []manager.PackageInfo
+		for _, pkg := range m.cfg.Packages {
+			bookmarked = append(bookmarked, manager.PackageInfo{
+				Name:      pkg,
+				Installed: installedSet[pkg],
+			})
 		}
 
 		return packagesLoadedMsg{bookmarked: bookmarked, installed: installed}
@@ -131,6 +136,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = 0
 		m.scroll = 0
+		m.viewMode = viewNormal
+		m.searchInput.Blur()
 		return m, nil
 
 	case packageInfoMsg:
@@ -217,6 +224,16 @@ func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewMode = viewSearch
 		m.searchInput.Focus()
 		return m, textinput.Blink
+
+	case msg.String() == "esc":
+		if m.filtered != nil {
+			// Add any newly bookmarked packages to the main items list
+			m.mergeBookmarkedItems()
+			m.filtered = nil
+			m.searchInput.SetValue("")
+			m.cursor = 0
+			m.scroll = 0
+		}
 
 	case msg.String() == "enter":
 		items := m.visibleItems()
@@ -320,9 +337,15 @@ func (m Model) searchPackages(query string) tea.Cmd {
 			return searchResultsMsg{err: err}
 		}
 
+		// Get installed list once instead of checking each result individually
+		installedList, _ := m.mgr.ListInstalled(ctx)
+		installedSet := make(map[string]bool)
+		for _, pkg := range installedList {
+			installedSet[pkg.Name] = true
+		}
+
 		for i := range results {
-			installed, _ := m.mgr.IsInstalled(ctx, results[i].Name)
-			results[i].Installed = installed
+			results[i].Installed = installedSet[results[i].Name]
 		}
 
 		return searchResultsMsg{results: results}
@@ -402,15 +425,42 @@ func (m *Model) updateBookmarkStatus(pkg string, bookmarked bool) {
 	for i := range m.items {
 		if m.items[i].info.Name == pkg {
 			m.items[i].bookmarked = bookmarked
-			return
+			break
 		}
 	}
 	for i := range m.filtered {
 		if m.filtered[i].info.Name == pkg {
 			m.filtered[i].bookmarked = bookmarked
-			return
+			break
 		}
 	}
+}
+
+// mergeBookmarkedItems adds any bookmarked packages from filtered results
+// that aren't already in the main items list, then re-sorts
+func (m *Model) mergeBookmarkedItems() {
+	if m.filtered == nil {
+		return
+	}
+
+	// Build set of existing item names
+	existing := make(map[string]bool)
+	for _, item := range m.items {
+		existing[item.info.Name] = true
+	}
+
+	// Add bookmarked items from filtered that don't exist in main list
+	for _, item := range m.filtered {
+		if item.bookmarked && !existing[item.info.Name] {
+			m.items = append(m.items, item)
+			existing[item.info.Name] = true
+		}
+	}
+
+	// Re-sort alphabetically
+	sort.Slice(m.items, func(i, j int) bool {
+		return m.items[i].info.Name < m.items[j].info.Name
+	})
 }
 
 func (m Model) visibleItems() []packageItem {
@@ -468,6 +518,11 @@ func (m Model) View() string {
 	if m.viewMode == viewSearch {
 		b.WriteString(searchStyle.Render("Search: "))
 		b.WriteString(m.searchInput.View())
+		b.WriteString("\n")
+	} else if m.filtered != nil {
+		b.WriteString(searchStyle.Render("Search: "))
+		b.WriteString(m.searchInput.Value())
+		b.WriteString(dimStyle.Render("  (/ to edit, Esc to clear)"))
 		b.WriteString("\n")
 	} else {
 		b.WriteString(dimStyle.Render("Press / to search"))
