@@ -53,6 +53,7 @@ type Model struct {
 	statusMsg  string
 	statusErr  bool
 	loading    bool
+	searching  bool
 }
 
 func NewModel(mgr manager.PackageManager, cfg *config.Config) Model {
@@ -121,7 +122,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case searchResultsMsg:
-		m.loading = false
+		m.searching = false
 		if msg.err != nil {
 			m.statusMsg = fmt.Sprintf("Search error: %v", msg.err)
 			m.statusErr = true
@@ -136,8 +137,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = 0
 		m.scroll = 0
-		m.viewMode = viewNormal
-		m.searchInput.Blur()
 		return m, nil
 
 	case packageInfoMsg:
@@ -239,6 +238,8 @@ func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		items := m.visibleItems()
 		if len(items) > 0 && m.cursor < len(items) {
 			pkg := items[m.cursor].info.Name
+			m.viewMode = viewInfo
+			m.infoText = "Loading..."
 			return m, m.fetchInfo(pkg)
 		}
 
@@ -294,7 +295,9 @@ func (m *Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		query := m.searchInput.Value()
 		if query != "" {
-			m.loading = true
+			m.searching = true
+			m.viewMode = viewNormal
+			m.searchInput.Blur()
 			return m, m.searchPackages(query)
 		}
 		return m, nil
@@ -473,7 +476,7 @@ func (m Model) visibleItems() []packageItem {
 // maxVisibleItems returns how many package items can fit on screen
 // accounting for header, search bar, status, and help lines
 func (m Model) maxVisibleItems() int {
-	// Header (2 lines) + search bar (2 lines) + status (2 lines) + help (2 lines) + section headers (2 lines)
+	// Header (2) + search bar (2) + section header (1) + help (3) + status (1) = 9, use 10 for safety
 	overhead := 10
 	available := m.height - overhead
 	if available < 1 {
@@ -534,16 +537,26 @@ func (m Model) View() string {
 	items := m.visibleItems()
 	maxVisible := m.maxVisibleItems()
 
-	if m.filtered != nil {
+	if m.searching {
 		b.WriteString(headerStyle.Render("SEARCH RESULTS"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Searching..."))
+		b.WriteString("\n")
+	} else if m.filtered != nil {
+		b.WriteString(headerStyle.Render("SEARCH RESULTS"))
+		if len(items) > maxVisible {
+			b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
+		}
+		b.WriteString("\n")
+		m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 	} else {
 		b.WriteString(headerStyle.Render("PACKAGES"))
+		if len(items) > maxVisible {
+			b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
+		}
+		b.WriteString("\n")
+		m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 	}
-	if len(items) > maxVisible {
-		b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
-	}
-	b.WriteString("\n")
-	m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 
 	// Status message
 	if m.statusMsg != "" {

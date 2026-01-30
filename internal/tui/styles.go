@@ -14,8 +14,7 @@ var (
 
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("99")).
-			MarginTop(1)
+			Foreground(lipgloss.Color("99"))
 
 	selectedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("205")).
@@ -37,8 +36,7 @@ var (
 			Foreground(lipgloss.Color("214"))
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			MarginTop(1)
+			Foreground(lipgloss.Color("241"))
 
 	modalStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
