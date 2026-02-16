@@ -54,6 +54,8 @@ type Model struct {
 	statusErr  bool
 	loading    bool
 	searching  bool
+	manualSet  map[string]bool
+	showAll    bool
 }
 
 func NewModel(mgr manager.PackageManager, cfg *config.Config) Model {
@@ -100,7 +102,9 @@ func (m Model) loadPackages() tea.Cmd {
 			})
 		}
 
-		return packagesLoadedMsg{bookmarked: bookmarked, installed: installed}
+		manual, _ := m.mgr.ListManuallyInstalled(ctx)
+
+		return packagesLoadedMsg{bookmarked: bookmarked, installed: installed, manual: manual}
 	}
 }
 
@@ -117,6 +121,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 			m.statusErr = true
+		}
+		m.manualSet = make(map[string]bool)
+		for _, pkg := range msg.manual {
+			m.manualSet[pkg.Name] = true
 		}
 		m.buildItemList(msg.bookmarked, msg.installed)
 		return m, nil
@@ -264,6 +272,11 @@ func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.viewMode = viewConfirm
 			}
 		}
+
+	case msg.String() == "a":
+		m.showAll = !m.showAll
+		m.cursor = 0
+		m.scroll = 0
 
 	case msg.String() == "b":
 		items := m.visibleItems()
@@ -470,6 +483,15 @@ func (m Model) visibleItems() []packageItem {
 	if m.filtered != nil {
 		return m.filtered
 	}
+	if !m.showAll {
+		var visible []packageItem
+		for _, item := range m.items {
+			if item.bookmarked || m.manualSet[item.info.Name] {
+				visible = append(visible, item)
+			}
+		}
+		return visible
+	}
 	return m.items
 }
 
@@ -550,7 +572,11 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 	} else {
-		b.WriteString(headerStyle.Render("PACKAGES"))
+		if m.showAll {
+			b.WriteString(headerStyle.Render("PACKAGES (all)"))
+		} else {
+			b.WriteString(headerStyle.Render("PACKAGES (manual)"))
+		}
 		if len(items) > maxVisible {
 			b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
 		}
@@ -572,7 +598,7 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("↑/k up  ↓/j down  i install  u uninstall  b bookmark"))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("Enter info  / search  q quit"))
+	b.WriteString(helpStyle.Render("Enter info  / search  a manual/all  q quit"))
 
 	// Modal overlay
 	if m.viewMode == viewInfo {

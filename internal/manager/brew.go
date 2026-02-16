@@ -145,3 +145,26 @@ func (b *BrewManager) ListInstalled(ctx context.Context) ([]PackageInfo, error) 
 
 	return results, scanner.Err()
 }
+
+func (b *BrewManager) ListManuallyInstalled(ctx context.Context) ([]PackageInfo, error) {
+	cmd := exec.CommandContext(ctx, "brew", "leaves")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []PackageInfo
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		name := strings.TrimSpace(scanner.Text())
+		if name == "" {
+			continue
+		}
+		results = append(results, PackageInfo{
+			Name:      name,
+			Installed: true,
+		})
+	}
+
+	return results, scanner.Err()
+}

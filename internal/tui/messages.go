@@ -5,6 +5,7 @@ import "boxy/internal/manager"
 type packagesLoadedMsg struct {
 	bookmarked []manager.PackageInfo
 	installed  []manager.PackageInfo
+	manual     []manager.PackageInfo
 	err        error
 }
 

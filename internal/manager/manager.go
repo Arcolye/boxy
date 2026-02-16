@@ -18,4 +18,5 @@ type PackageManager interface {
 	IsInstalled(ctx context.Context, pkg string) (bool, error)
 	GetInfo(ctx context.Context, pkg string) (PackageInfo, error)
 	ListInstalled(ctx context.Context) ([]PackageInfo, error)
+	ListManuallyInstalled(ctx context.Context) ([]PackageInfo, error)
 }
