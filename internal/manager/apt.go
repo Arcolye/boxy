@@ -3,6 +3,8 @@ package manager
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -46,17 +48,29 @@ func (a *AptManager) Search(ctx context.Context, query string) ([]PackageInfo, e
 }
 
 func (a *AptManager) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"apt", "install", "-y"}, packages...)
+	args := append([]string{"apt-get", "install", "-y"}, packages...)
 	cmd := exec.CommandContext(ctx, "sudo", args...)
-	cmd.Stdin = nil
-	return cmd.Run()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("sudo apt-get install failed (try running 'sudo -v' first to cache credentials): %w", err)
+	}
+	return nil
 }
 
 func (a *AptManager) Uninstall(ctx context.Context, packages ...string) error {
-	args := append([]string{"apt", "remove", "-y"}, packages...)
+	args := append([]string{"apt-get", "remove", "-y"}, packages...)
 	cmd := exec.CommandContext(ctx, "sudo", args...)
-	cmd.Stdin = nil
-	return cmd.Run()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("sudo apt-get remove failed (try running 'sudo -v' first to cache credentials): %w", err)
+	}
+	return nil
 }
 
 func (a *AptManager) IsInstalled(ctx context.Context, pkg string) (bool, error) {

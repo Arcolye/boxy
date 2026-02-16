@@ -5,6 +5,9 @@
 - [x] Bug: When the package list (either main list or search results) has more items than can fit on the screen, the title bar ("Boxy [brew]") doesn't show 
 - [x] Better loading: on search, instead of clearing the whole screen and showing just "Loading", show the search results screen, but where the list items would appear, put some loading animation
 - [x] Better loading: when I hit enter to see item details, there's no indication that anything is happening until the response comes back. Instead, can we open the overlay box right away, with a loading animation until the info replaces it?
+- [ ] Install function in apt (linux) seems not to work, probably a sudo problem
+- [ ] brew list has a `--installed-on-request` flag, which we could use to filter out packages installed indirectly as dependencies. Does apt have this too?
+- [ ] Support install scripts as packages (`curl -fsSL https://claude.ai/install.sh | bash`)
 - [ ] Should we add a fzf-style search of local packages? ("local" means installed or bookmarked)
 - [ ] Should we combine packages from all installed package managers in the same list? In that case, we'd want each item to have an icon or something representing the package manager.
-
+- [ ] Add compatibility with other package managers: Arch
