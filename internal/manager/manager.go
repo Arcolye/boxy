@@ -1,6 +1,9 @@
 package manager
 
-import "context"
+import (
+	"context"
+	"os/exec"
+)
 
 type PackageInfo struct {
 	Name        string
@@ -19,4 +22,6 @@ type PackageManager interface {
 	GetInfo(ctx context.Context, pkg string) (PackageInfo, error)
 	ListInstalled(ctx context.Context) ([]PackageInfo, error)
 	ListManuallyInstalled(ctx context.Context) ([]PackageInfo, error)
+	Command(ctx context.Context, action string, pkg string) *exec.Cmd
+	NeedsSudo() bool
 }

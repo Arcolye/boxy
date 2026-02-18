@@ -41,6 +41,20 @@ func (b *BrewManager) Search(ctx context.Context, query string) ([]PackageInfo, 
 	return results, scanner.Err()
 }
 
+func (b *BrewManager) Command(ctx context.Context, action string, pkg string) *exec.Cmd {
+	switch action {
+	case "install":
+		return exec.CommandContext(ctx, "brew", "install", pkg)
+	case "uninstall":
+		return exec.CommandContext(ctx, "brew", "uninstall", pkg)
+	}
+	return exec.CommandContext(ctx, "brew", action, pkg)
+}
+
+func (b *BrewManager) NeedsSudo() bool {
+	return false
+}
+
 func (b *BrewManager) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"install"}, packages...)
 	cmd := exec.CommandContext(ctx, "brew", args...)

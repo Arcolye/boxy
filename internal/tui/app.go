@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 
@@ -21,6 +22,7 @@ const (
 	viewSearch
 	viewInfo
 	viewConfirm
+	viewSudoPassword
 )
 
 type confirmAction int
@@ -44,18 +46,21 @@ type Model struct {
 	cursor     int
 	scroll     int // scroll offset for viewport
 	viewMode   viewMode
-	searchInput textinput.Model
-	items      []packageItem
-	filtered   []packageItem
-	infoText   string
-	confirmPkg string
-	confirmAct confirmAction
-	statusMsg  string
-	statusErr  bool
-	loading    bool
-	searching  bool
-	manualSet  map[string]bool
-	showAll    bool
+	searchInput   textinput.Model
+	passwordInput textinput.Model
+	items         []packageItem
+	filtered      []packageItem
+	infoText      string
+	confirmPkg    string
+	confirmAct    confirmAction
+	sudoPassword  string
+	statusMsg     string
+	statusErr     bool
+	loading       bool
+	searching     bool
+	installing    bool
+	manualSet     map[string]bool
+	showAll       bool
 }
 
 func NewModel(mgr manager.PackageManager, cfg *config.Config) Model {
@@ -64,12 +69,20 @@ func NewModel(mgr manager.PackageManager, cfg *config.Config) Model {
 	ti.CharLimit = 100
 	ti.Width = 40
 
+	pi := textinput.New()
+	pi.Placeholder = "Password"
+	pi.EchoMode = textinput.EchoPassword
+	pi.EchoCharacter = '*'
+	pi.CharLimit = 200
+	pi.Width = 40
+
 	return Model{
-		mgr:        mgr,
-		cfg:        cfg,
-		keys:       defaultKeyMap(),
-		searchInput: ti,
-		loading:    true,
+		mgr:           mgr,
+		cfg:           cfg,
+		keys:          defaultKeyMap(),
+		searchInput:   ti,
+		passwordInput: pi,
+		loading:       true,
 	}
 }
 
@@ -157,6 +170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case installResultMsg:
+		m.installing = false
 		if msg.err != nil {
 			m.statusMsg = fmt.Sprintf("Install failed: %v", msg.err)
 			m.statusErr = true
@@ -169,6 +183,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case uninstallResultMsg:
+		m.installing = false
 		if msg.err != nil {
 			m.statusMsg = fmt.Sprintf("Uninstall failed: %v", msg.err)
 			m.statusErr = true
@@ -204,6 +219,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleInfoKey(msg)
 	case viewConfirm:
 		return m.handleConfirmKey(msg)
+	case viewSudoPassword:
+		return m.handleSudoPasswordKey(msg)
 	default:
 		return m.handleNormalKey(msg)
 	}
@@ -332,17 +349,53 @@ func (m *Model) handleInfoKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
-		pkg := m.confirmPkg
-		if m.confirmAct == confirmInstall {
-			return m, m.installPackage(pkg)
+		if m.mgr.NeedsSudo() && !manager.SudoCached() {
+			m.viewMode = viewSudoPassword
+			m.passwordInput.SetValue("")
+			m.passwordInput.Focus()
+			return m, textinput.Blink
 		}
-		return m, m.uninstallPackage(pkg)
+		return m, m.startAction()
 
 	case "n", "esc":
 		m.viewMode = viewNormal
 		m.confirmPkg = ""
 	}
 	return m, nil
+}
+
+func (m *Model) handleSudoPasswordKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.sudoPassword = m.passwordInput.Value()
+		m.passwordInput.SetValue("")
+		m.passwordInput.Blur()
+		return m, m.startAction()
+
+	case "esc":
+		m.passwordInput.SetValue("")
+		m.passwordInput.Blur()
+		m.viewMode = viewNormal
+		m.confirmPkg = ""
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.passwordInput, cmd = m.passwordInput.Update(msg)
+	return m, cmd
+}
+
+func (m *Model) startAction() tea.Cmd {
+	pkg := m.confirmPkg
+	password := m.sudoPassword
+	m.sudoPassword = ""
+	m.installing = true
+	m.viewMode = viewNormal
+
+	if m.confirmAct == confirmInstall {
+		return m.installPackage(pkg, password)
+	}
+	return m.uninstallPackage(pkg, password)
 }
 
 func (m Model) searchPackages(query string) tea.Cmd {
@@ -376,20 +429,40 @@ func (m Model) fetchInfo(pkg string) tea.Cmd {
 	}
 }
 
-func (m Model) installPackage(pkg string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		err := m.mgr.Install(ctx, pkg)
+func (m Model) installPackage(pkg string, password string) tea.Cmd {
+	return m.runCommand("install", pkg, password, func(err error) tea.Msg {
 		return installResultMsg{pkg: pkg, err: err}
+	})
+}
+
+func (m Model) uninstallPackage(pkg string, password string) tea.Cmd {
+	return m.runCommand("uninstall", pkg, password, func(err error) tea.Msg {
+		return uninstallResultMsg{pkg: pkg, err: err}
+	})
+}
+
+func (m Model) runCommand(action, pkg, password string, done func(error) tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		cmd := m.mgr.Command(context.Background(), action, pkg)
+		if password != "" {
+			cmd = injectSudoStdin(cmd, password)
+		}
+		err := cmd.Run()
+		return done(err)
 	}
 }
 
-func (m Model) uninstallPackage(pkg string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		err := m.mgr.Uninstall(ctx, pkg)
-		return uninstallResultMsg{pkg: pkg, err: err}
+// injectSudoStdin rebuilds the command with sudo -S and pipes the password via stdin.
+func injectSudoStdin(cmd *exec.Cmd, password string) *exec.Cmd {
+	// The existing command is "sudo <args...>" — replace with "sudo -S <args...>"
+	args := cmd.Args
+	newArgs := []string{"-S"}
+	if len(args) > 1 {
+		newArgs = append(newArgs, args[1:]...)
 	}
+	newCmd := exec.Command("sudo", newArgs...)
+	newCmd.Stdin = strings.NewReader(password + "\n")
+	return newCmd
 }
 
 func (m *Model) buildItemList(bookmarked, installed []manager.PackageInfo) {
@@ -585,6 +658,14 @@ func (m Model) View() string {
 	}
 
 	// Status message
+	if m.installing {
+		b.WriteString("\n")
+		action := "Installing"
+		if m.confirmAct == confirmUninstall {
+			action = "Uninstalling"
+		}
+		b.WriteString(searchStyle.Render(fmt.Sprintf("%s %s...", action, m.confirmPkg)))
+	}
 	if m.statusMsg != "" {
 		b.WriteString("\n")
 		if m.statusErr {
@@ -611,6 +692,10 @@ func (m Model) View() string {
 		}
 		msg := fmt.Sprintf("Are you sure you want to %s %s?\n\n[y] Yes  [n] No", action, m.confirmPkg)
 		return m.renderWithModal(b.String(), "Confirm", msg)
+	}
+	if m.viewMode == viewSudoPassword {
+		msg := fmt.Sprintf("sudo password for %s:\n\n%s\n\nEnter to submit, Esc to cancel", m.confirmPkg, m.passwordInput.View())
+		return m.renderWithModal(b.String(), "Authentication", msg)
 	}
 
 	return b.String()

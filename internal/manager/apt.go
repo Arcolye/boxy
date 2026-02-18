@@ -47,6 +47,21 @@ func (a *AptManager) Search(ctx context.Context, query string) ([]PackageInfo, e
 	return results, scanner.Err()
 }
 
+func (a *AptManager) Command(ctx context.Context, action string, pkg string) *exec.Cmd {
+	var args []string
+	switch action {
+	case "install":
+		args = []string{"apt-get", "install", "-y", pkg}
+	case "uninstall":
+		args = []string{"apt-get", "remove", "-y", pkg}
+	}
+	return exec.CommandContext(ctx, "sudo", args...)
+}
+
+func (a *AptManager) NeedsSudo() bool {
+	return true
+}
+
 func (a *AptManager) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"apt-get", "install", "-y"}, packages...)
 	cmd := exec.CommandContext(ctx, "sudo", args...)
