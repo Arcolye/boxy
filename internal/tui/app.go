@@ -32,6 +32,14 @@ const (
 	confirmUninstall
 )
 
+type viewFilter int
+
+const (
+	filterBookmarked viewFilter = iota
+	filterManual
+	filterAll
+)
+
 type packageItem struct {
 	info       manager.PackageInfo
 	bookmarked bool
@@ -60,7 +68,7 @@ type Model struct {
 	searching     bool
 	installing    bool
 	manualSet     map[string]bool
-	showAll       bool
+	viewFilter    viewFilter
 }
 
 func NewModel(mgr manager.PackageManager, cfg *config.Config) Model {
@@ -290,8 +298,8 @@ func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case msg.String() == "a":
-		m.showAll = !m.showAll
+	case msg.String() == "v":
+		m.viewFilter = (m.viewFilter + 1) % 3
 		m.cursor = 0
 		m.scroll = 0
 
@@ -556,7 +564,16 @@ func (m Model) visibleItems() []packageItem {
 	if m.filtered != nil {
 		return m.filtered
 	}
-	if !m.showAll {
+	switch m.viewFilter {
+	case filterBookmarked:
+		var visible []packageItem
+		for _, item := range m.items {
+			if item.bookmarked {
+				visible = append(visible, item)
+			}
+		}
+		return visible
+	case filterManual:
 		var visible []packageItem
 		for _, item := range m.items {
 			if item.bookmarked || m.manualSet[item.info.Name] {
@@ -564,8 +581,9 @@ func (m Model) visibleItems() []packageItem {
 			}
 		}
 		return visible
+	default:
+		return m.items
 	}
-	return m.items
 }
 
 // maxVisibleItems returns how many package items can fit on screen
@@ -645,10 +663,13 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		m.renderItemsViewport(&b, items, 0, m.scroll, maxVisible)
 	} else {
-		if m.showAll {
-			b.WriteString(headerStyle.Render("PACKAGES (all)"))
-		} else {
+		switch m.viewFilter {
+		case filterBookmarked:
+			b.WriteString(headerStyle.Render("PACKAGES (bookmarked)"))
+		case filterManual:
 			b.WriteString(headerStyle.Render("PACKAGES (manual)"))
+		default:
+			b.WriteString(headerStyle.Render("PACKAGES (all)"))
 		}
 		if len(items) > maxVisible {
 			b.WriteString(dimStyle.Render(fmt.Sprintf(" (%d-%d of %d)", m.scroll+1, min(m.scroll+maxVisible, len(items)), len(items))))
@@ -679,7 +700,7 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("↑/k up  ↓/j down  i install  u uninstall  b bookmark"))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("Enter info  / search  a manual/all  q quit"))
+	b.WriteString(helpStyle.Render("Enter info  / search  v view  q quit"))
 
 	// Modal overlay
 	if m.viewMode == viewInfo {

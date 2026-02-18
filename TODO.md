@@ -10,8 +10,6 @@ After completing any of these, move it to the "Change Summaries" section with a 
 - Let packages.yml include more data like
     - auto-install
     - custom install instructions
-- Instead of "a" for "all", "v" for "view" which 3-way toggles between "bookmarked", "manual", "all"
-
 
 
 # Change Summaries
@@ -32,6 +30,25 @@ After completing any of these, move it to the "Change Summaries" section with a 
    are preserved for non-TUI use.
 
 
+#### Sudo password input via TUI modal
+
+  Previously, install/uninstall on apt used `tea.ExecProcess` which suspended the entire TUI to let sudo
+  get the password from the terminal.
+
+  Fix: Added a `NeedsSudo() bool` method to the PackageManager interface (true for apt, false for brew)
+  and a `SudoCached()` helper that runs `sudo -n true` to check if credentials are already cached. When
+  the user confirms an install/uninstall on a sudo manager without cached credentials, a password modal
+  appears with a masked textinput. The password is piped to `sudo -S` via stdin, keeping the TUI visible
+  the whole time. The password is cleared from memory immediately after use. When sudo credentials are
+  already cached, the modal is skipped entirely.
+
+#### "v" view toggle (bookmarked / manual / all)
+
+  Replaced the "a" keybinding (which toggled between manual and all) with "v" that cycles through three
+  view filters: bookmarked (only bookmarked packages), manual (bookmarked + manually installed), and all
+  (every installed package). The header label updates to reflect the current filter.
+
+#### other unsummarized changes
 - brew list has a `--installed-on-request` flag, which we could use to filter out packages installed indirectly as dependencies. Does apt have this too?
 - [x] After bookmarking search results and escaping back to main view, those bookmarked packages should be in the list (uninstalled of course)
 - [x] Why does "Loading..." take so dang long, like 5 seconds??
